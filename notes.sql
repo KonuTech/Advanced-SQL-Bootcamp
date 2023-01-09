@@ -1533,3 +1533,235 @@ SELECT
 FROM general_hospital.v_orders
 WHERE order_parent_order_id IS NOT NULL
 ;
+
+
+
+DROP VIEW IF EXISTS general_hospital.v_patients_primary_care;
+CREATE VIEW general_hospital.v_patients_primary_care AS
+    SELECT
+         p.master_patient_id
+         ,p.name AS patient_name
+         ,p.gender
+         ,p.primary_language
+         ,p.date_of_birth
+         ,p.pcp_id
+         ,ph.full_name AS pcp_name
+FROM general_hospital.patients AS p
+LEFT OUTER JOIN general_hospital.physicians AS ph
+ON p.pcp_id = ph.id
+;
+
+
+
+CREATE MATERIALIZED VIEW general_hospital.mv_hospital_encounters AS
+SELECT
+     h.hospital_id
+    ,h.hospital_name
+    ,TO_CHAR(patient_admission_datetime, 'YYYY-MM') AS year_month
+    ,COUNT(patient_encounter_id) AS num_encounters
+    ,COUNT(NULLIF(patient_in_icu_flag, 'N')) AS num_icu_patients
+FROM general_hospital.encounters AS e
+LEFT OUTER JOIN general_hospital.departments AS d
+    ON e.department_id = d.department_id
+LEFT OUTER JOIN general_hospital.hospitals AS h
+    ON d.hospital_id = h.hospital_id
+GROUP BY
+     1
+    ,2
+    ,3
+ORDER BY
+     1
+    ,2
+    ,3
+WITH NO DATA
+;
+REFRESH MATERIALIZED VIEW general_hospital.mv_hospital_encounters;
+SELECT * FROM general_hospital.mv_hospital_encounters;
+ALTER MATERIALIZED VIEW general_hospital.mv_hospital_encounters
+    RENAME TO mv_hospital_encounters_statistics
+;
+
+
+
+DROP MATERIALIZED VIEW general_hospital.v_patients_primary_malhem;
+CREATE MATERIALIZED VIEW general_hospital.v_patients_primary_malhem AS
+SELECT
+     p.master_patient_id
+    ,p.name AS patient_name
+    ,p.gender
+    ,p.primary_language
+    ,p.pcp_id
+    ,p.date_of_birth
+FROM general_hospital.patients AS p
+WHERE
+    p.pcp_id = 4121
+WITH CHECK OPTION
+;
+ALTER MATERIALIZED VIEW general_hospital.v_patients_primary_malhem
+    ALTER COLUMN pcp_id SET DEFAULT 4121
+;
+ALTER VIEW general_hospital.v_patients_primary_malhem
+    RENAME TO v_patients_primary_care_malhem
+;
+INSERT INTO general_hospital.v_patients_primary_care_malhem VALUES
+    (1245, 'John Dee', 'Male', 'ENGLISH', 4122, '2003-07-09')
+;
+
+
+CREATE FUNCTION general_hospital.f_test_function(a int, b int)
+    RETURNS int
+    LANGUAGE SQL
+    AS
+    'SELECT $1 + $2;';
+
+SELECT general_hospital.f_test_function(2, 2);
+
+CREATE FUNCTION general_hospital.f_plpgsql_function(a int, b int)
+    RETURNS int
+    AS $$
+    BEGIN
+        RETURN a + b;
+    END;
+    $$ LANGUAGE plpgsql;
+SELECT general_hospital.f_plpgsql_function(1, 2);
+SELECT general_hospital.f_plpgsql_function(a => 1, b=>2);
+
+
+
+CREATE FUNCTION general_hospital.f_calculate_los(start_time timestamp, end_time timestamp)
+    RETURNS numeric
+    AS $$
+    BEGIN
+        RETURN ROUND((EXTRACT(EPOCH FROM (end_time - start_time))/3600)::numeric, 2);
+    END;
+    $$ LANGUAGE plpgsql;
+
+SELECT
+     patient_admission_datetime
+    ,patient_discharge_datetime
+    ,general_hospital.f_calculate_los(patient_admission_datetime, patient_discharge_datetime) AS los
+FROM general_hospital.encounters AS e;
+SELECT
+     routine_definition
+FROM information_schema.routines
+WHERE
+    routine_schema = 'general_hospital';
+
+
+CREATE OR REPLACE FUNCTION general_hospital.f_calculate_los(start_time timestamp, end_time timestamp)
+    RETURNS numeric
+    AS $$
+    BEGIN
+        RETURN ROUND(
+            (EXTRACT(
+                EPOCH FROM (end_time - start_time)
+            )/3600)::numeric, 4
+        );
+    END;
+    $$ LANGUAGE plpgsql;
+SELECT
+    general_hospital.f_calculate_los(patient_admission_datetime, patient_discharge_datetime) AS los
+FROM general_hospital.encounters AS e
+;
+DROP FUNCTION IF EXISTS general_hospital.f_test_function;
+
+
+CREATE FUNCTION general_hospital.f_mask_field(field text)
+    RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+        RETURN md5(field);
+    END;
+    $$;
+
+SELECT
+     name
+    ,general_hospital.f_mask_field(name) AS masked_name
+FROM general_hospital.patients;
+
+CREATE OR REPLACE FUNCTION general_hospital.f_mask_field(field text)
+    RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+        IF field IS null THEN
+            RETURN null;
+        ELSE
+            RETURN CONCAT('Patient ', LEFT(md5(field), 8));
+        END IF;
+    END;
+    $$;
+SELECT
+     name
+    ,general_hospital.f_mask_field(name)
+FROM general_hospital.patients
+ALTER FUNCTION general_hospital.f_mask_field
+    RENAME TO f_mask_patient_name;
+
+
+CREATE PROCEDURE general_hospital.sp_test_procedure()
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+        DROP TABLE IF EXISTS general_hospital.test_table;
+        CREATE TABLE general_hospital.test_table (
+            id int
+        );
+        COMMIT;
+    END;
+    $$;
+CALL general_hospital.sp_test_procedure();
+SELECT *
+FROM information_schema.routines
+WHERE
+    ROUTINE_SCHEMA = 'general_hospital'
+    AND routine_type = 'PROCEDURE'
+;
+
+
+CREATE OR REPLACE PROCEDURE general_hospital.sp_test_procedure()
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+        DROP TABLE IF EXISTS general_hospital.test_table_new;
+        CREATE TABLE general_hospital.test_table_new (
+            id int
+        );
+        COMMIT;
+    END;
+    $$;
+CALL general_hospital.sp_test_procedure();
+ALTER PROCEDURE general_hospital.sp_test_procedure
+    SET SCHEMA PUBLIC;
+DROP PROCEDURE IF EXISTS general_hospital.sp_test_procedure;
+
+
+
+CREATE OR REPLACE PROCEDURE general_hospital.sp_update_surgery_cost(surgery_to_update int, cost_change numeric)
+    LANGUAGE plpgsql
+    AS $$
+    DECLARE
+        num_resources int;
+    BEGIN
+        -- Update surgical encounters
+        UPDATE general_hospital.surgical_encounters
+            SET total_cost = total_cost + cost_change
+            WHERE surgery_id = surgery_to_update;
+        COMMIT;
+        -- Get number of resources
+        SELECT COUNT(*) INTO num_resources
+        FROM general_hospital.surgical_costs
+        WHERE surgery_id = surgery_to_update;
+        -- Update costs table
+        UPDATE general_hospital.surgical_costs
+            SET resource_cost = resource_cost + (cost_change / num_resources)
+            WHERE surgery_id = surgery_to_update;
+        COMMIT;
+    END;
+    $$;
+SELECT
+     SUM(resource_cost)
+FROM general_hospital.surgical_costs
+WHERE surgery_id = 6518;
+CALL general_hospital.sp_update_surgery_cost(6518, 1000);
