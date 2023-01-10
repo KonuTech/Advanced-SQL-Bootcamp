@@ -1796,4 +1796,179 @@ SELECT
 FROM general_hospital.physicians
 WHERE id = 12345
 ;
+ALTER TABLE general_hospital.physicians
+    DISABLE TRIGGER tr_clean_physician_name;
+INSERT INTO general_hospital.physicians VALUES
+    (' John ', NULL, 'Something', 12346);
 
+SELECT *
+FROM general_hospital.physicians
+WHERE id = 12346;
+INSERT INTO general_hospital.physicians VALUES
+    (' John ', null, 'Something', 12347);
+ALTER TRIGGER tr_clean_physician_name ON general_hospital.physicians
+    RENAME TO tr_clean_name;
+DROP TRIGGER IF EXISTS tr_clean_name ON general_hospital.physicians;
+
+
+
+CREATE FUNCTION general_hospital.f_update_surgical_costs()
+    RETURNS TRIGGER
+    LANGUAGE plpgsql
+    AS $$
+    DECLARE
+        num_resources int;
+    BEGIN
+        -- Get resource count
+        SELECT COUNT(*) INTO num_resources
+        FROM general_hospital.surgical_costs
+        WHERE surgery_id = NEW.surgery_id;
+        -- Update costs table
+        IF NEW.total_cost != OLD.total_cost THEN
+            UPDATE general_hospital.surgical_costs
+            SET resource_cost = NEW.total_cost / num_resources
+            WHERE surgery_id = NEW.surgery_id;
+        END IF;
+        RETURN NEW;
+    END;
+    $$;
+ALTER TRIGGER my_trigger ON general_hospital.surgical_encounters
+RENAME TO tr_update_surgical_costs;
+SELECT * FROM general_hospital.surgical_encounters;
+UPDATE general_hospital.surgical_encounters
+    SET total_cost = total_cost + 1000
+    WHERE surgery_id = 14615;
+SELECT SUM(resource_cost)
+FROM general_hospital.surgical_costs
+WHERE surgery_id = 14615;
+DROP TRIGGER tr_update_surgical_costs ON general_hospital.surgical_encounters;
+
+EXPLAIN  
+    WITH young_patients AS (
+        SELECT *
+        FROM general_hospital.patients
+        WHERE date_of_birth >= '2000-01-01'
+    )
+    SELECT *
+    FROM young_patients
+    WHERE name ILIKE 'm%'
+;
+EXPLAIN ANALYZE
+    WITH young_patients AS (
+        SELECT *
+        FROM general_hospital.patients
+        WHERE date_of_birth >= '2000-01-01'
+    )
+    SELECT *
+    FROM young_patients
+    WHERE name ILIKE 'm%'
+;
+EXPLAIN (FORMAT YAML)
+    WITH young_patients AS (
+        SELECT *
+        FROM general_hospital.patients
+        WHERE date_of_birth >= '2000-01-01'
+    )
+    SELECT *
+    FROM young_patients
+    WHERE name ILIKE 'm%'
+;
+EXPLAIN (FORMAT XML)
+    WITH young_patients AS (
+        SELECT *
+        FROM general_hospital.patients
+        WHERE date_of_birth >= '2000-01-01'
+    )
+    SELECT *
+    FROM young_patients
+    WHERE name ILIKE 'm%'
+;
+EXPLAIN (FORMAT JSON)
+    WITH young_patients AS (
+        SELECT *
+        FROM general_hospital.patients
+        WHERE date_of_birth >= '2000-01-01'
+    )
+    SELECT *
+    FROM young_patients
+    WHERE name ILIKE 'm%'
+;
+
+BEGIN;
+TRUNCATE general_hospital.patients CASCADE;
+ROLLBACK;
+
+
+
+
+WITH resources AS (
+    SELECT
+         surgery_id
+        ,ARRAY_AGG(DISTINCT resource_name ORDER BY resource_name) AS resource_array
+    FROM
+        general_hospital.surgical_costs
+    GROUP BY
+        surgery_id
+)
+
+SELECT
+     r1.surgery_id
+    ,r2.surgery_id
+    ,r1.resource_array
+FROM resources AS r1
+LEFT OUTER JOIN resources AS r2
+    ON r1.surgery_id != r2.surgery_id
+    AND r1.resource_array = r2.resource_array
+WHERE
+    r1.resource_array @> array['Full Blood Count']::varchar[]
+;
+
+SELECT
+    '{"first_name": "Ben", "last_name": "Doe"}'::json->>'first_name';
+
+--EXTENSION
+SELECT *
+FROM pg_available_extensions
+ORDER BY 1;
+
+CREATE EXTENSION fuzzystrmatch SCHEMA general_hospital;
+
+SELECT levenshtein('bigelow', 'bigalo');
+CREATE EXTENSION earthdistance CASCADE SCHEMA general_hospital;
+
+SELECT
+     p.latitude
+    ,p.longitude
+    ,h.latitude
+    ,h.longitude
+    ,earth_distance(
+         ll_to_earth(p.latitude, p.longitude)
+        ,ll_to_earth(h.latitude, h.longitude)
+    ) / 1000 AS distance_km
+    ,point(
+         p.longitude
+        ,p.latitude
+    ) <@> point(
+         h.longitude
+        ,h.latitude
+    ) AS distance_miles
+FROM general_hospital.patients AS p
+INNER JOIN general_hospital.hospitals AS h
+    ON h.hospital_id =  111000
+;
+
+CREATE EXTENSION insert_username schema general_hospital;
+BEGIN;
+EXPLAIN ANALYZE
+DELETE FROM general_hospital.vitals;
+ROLLBACK;
+
+SELECT
+    jsonb_build_object(
+        'name', name,
+        'address', address_full,
+        'city', city,
+        'state', state,
+        'zip_cd', zip_cd
+    ) AS address_jsonb
+FROM general_hospital.patients;
