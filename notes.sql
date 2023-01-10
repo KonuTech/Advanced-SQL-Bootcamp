@@ -1765,3 +1765,35 @@ SELECT
 FROM general_hospital.surgical_costs
 WHERE surgery_id = 6518;
 CALL general_hospital.sp_update_surgery_cost(6518, 1000);
+
+
+CREATE FUNCTION general_hospital.f_clean_physician_name()
+    RETURNS TRIGGER
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+        IF NEW.last_name IS NULL OR NEW.first_name IS NULL THEN
+            RAISE EXCEPTION 'Name cannot be null';
+        ELSE
+            NEW.first_name = TRIM(NEW.first_name);
+            NEW.last_name = TRIM(NEW.last_name);
+            NEW.full_name = CONCAT(NEW.last_name, ', ', NEW.first_name);
+            RETURN NEW;
+        END IF;
+    END;
+    $$
+CREATE TRIGGER tr_clean_physician_name
+    BEFORE INSERT
+    ON general_hospital.physicians
+    FOR EACH ROW
+    EXECUTE PROCEDURE general_hospital.f_clean_physician_name();
+SELECT *
+FROM general_hospital.physicians;
+INSERT INTO general_hospital.physicians VALUES
+    (' John ', ' Doe ', 'Something', 12345)
+SELECT
+    *
+FROM general_hospital.physicians
+WHERE id = 12345
+;
+
